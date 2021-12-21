@@ -1,13 +1,9 @@
-using ModelingToolkit
+using ModelingToolkit, OrdinaryDiffEq
 
 function SREBP2_reg(SREBP2,Vmax_up, Km_up, Vmax_down, Km_down)
-    if SREBP2 >= 1
-        In = (SREBP2-1);
-        Yout = 1 + (Vmax_up-1) * In / (In + (Km_up-1))
-    else
-        In = (1-SREBP2);
-        Yout = 1 - Vmax_down * In / (In + Km_down)
-    end
+    In = IfElse.ifelse(SREBP2 >= 1,(SREBP2-1), (1-SREBP2)) 
+    Yout =  IfElse.ifelse(SREBP2 >= 1, 1 + (Vmax_up-1) * In / (In + (Km_up-1)), 1 - Vmax_down * In / (In + Km_down))
+    return Yout
 end
 
 function transform(Xin,Yrange,Xic50, Xrange=3, Xscale = "log")
@@ -35,10 +31,10 @@ p = [LDLparticleCE  =>  0.92
 ,minSREBP2level => 0
 ,LDLcClearanceRate =>0.187
 ,deciliter_to_liter => 10
-,dilipidemic_index => 1   
+,dilipidemic_index => 1
 ,PK_Ka  =>  0.247
 ,PK_Kel_F  => 0.0443
-, PK_V2_F  =>  5640
+,PK_V2_F  =>  5640
 ,PK_ComplexClearanceRate => 0.182
 ,PK_kon  => 0.84 
 ,PK_koff  => 1.11
@@ -86,6 +82,8 @@ u0 = [hepatic_cholesterol => 6000
 
 D = Differential(t)
 
+SREBP2 = transform(hepatic_cholesterol, [maxSREBP2level, minSREBP2level], baseline_hepatic_cholesterol, 3)
+circ_pcsk9_ngperml = circ_pcsk9 * 74
 DietCholesterolAbsorption = AbsorptionFraction * CholesterolIntakeDiet
 CholesterolSynthesis = BaselineCholesterolSynthesisRate* StatinEffectOnCholesterolSynthesis
 LDLFormation = LDLparticleProdRate * hepatic_cholesterol* circ_volume * LDLparticleCE
@@ -93,10 +91,10 @@ LDLcleranceToHepatic = LDLcClearanceRate * dilipidemic_index *LDLc * surface_LDL
 CholesterolLost = LossRate * hepatic_cholesterol
 HDLclerance = HDLcClearanceRate * HDLch * circ_volume * deciliter_to_liter* clearance_hepatic_fraction
 LDLcleranceToPeriphery = LDLcClearanceRate * dilipidemic_index * LDLc * (1- clearance_hepatic_fraction) *surface_LDLr
-pcsk9_synthesis = pcsk9SynthesisRate* SREBP2_reg(SREBP2,pcsk9_synthesis_Vm_up,pcsk9_synthesis_Km_up,pcsk9_synthesis_Vm_down,pcsk9_synthesis_Km_down)
+pcsk9_synthesis = pcsk9SynthesisRate * SREBP2_reg(SREBP2,pcsk9_synthesis_Vm_up,pcsk9_synthesis_Km_up,pcsk9_synthesis_Vm_down,pcsk9_synthesis_Km_down)
 pcsk9_clearance = pcsk9ClearanceRate * circ_pcsk9 * (surface_LDLr / LDLr0)^gamma
-LDLr_expression = LDLrSynthesis * SREBP2_reg(SREBP2, LDLr_expression.Vm_up, LDLr_expression.Km_up, LDLr_expression.Vm_down, LDLr_expression.Km_down)
-LDLr_clearance = LDLrClearance * surface_LDLr * transform(2, [(1 - pcsk9_on_LDLr), (1 + pcsk9_on_LDLr)], Baselinepcsk9, pcsk9_on_LDLr_range,"lin")
+LDLr_expression = LDLrSynthesis * SREBP2_reg(SREBP2, LDLr_expression_Vm_up, LDLr_expression_Km_up, LDLr_expression_Vm_down, LDLr_expression_Km_down)
+LDLr_clearance = LDLrClearance * surface_LDLr * transform(circ_pcsk9_ngperml, [(1 - pcsk9_on_LDLr), (1 + pcsk9_on_LDLr)], Baselinepcsk9, pcsk9_on_LDLr_range,"lin")
 absorption = ((PK_Ka * antipcsk9_dose / PK_V2_F) * (1000 / 150) )
 binding = PK_kon * antipcsk9 * circ_pcsk9 - PK_koff * complex
 antipcsk9_clearance = PK_Kel_F * antipcsk9
@@ -108,14 +106,14 @@ LDLrIndependentCleranceToHepatic = LDLrIndClearanceRate * clearance_hepatic_frac
 LDLrIndependentCleranceToPeriphery = LDLrIndClearanceRate * (1 - clearance_hepatic_fraction) * LDLc
 
 
-eqs = [D(hepatic_cholesterol_dt) ~ DietCholesterolAbsorption + CholesterolSynthesis - LDLFormation + LDLcleranceToHepatic - CholesterolLost + HDLclerance + LDLrIndependentCleranceToHepatic
-    ,D(LDLc_dt) ~ LDLFormation - LDLcleranceToHepatic - LDLcleranceToPeriphery - LDLrIndependentCleranceToHepatic - LDLrIndependentCleranceToPeriphery
-    ,D(circ_pcsk9_dt) ~ pcsk9_synthesis - pcsk9_clearance - binding
-    ,D(surface_LDLr_dt) ~ (LDLr_expression - LDLr_clearance)
-    ,D(antipcsk9_dt) ~ absorption - binding - antipcsk9_clearance - distribution
-    ,D(antipcsk9_dose_dt) ~ -dose_compartment_clearance
-    ,D(complex_dt) ~ binding - complex_clearance
-    ,D(peripheral_dt) ~ -redistribution]
+eqs = [D(hepatic_cholesterol) ~ DietCholesterolAbsorption + CholesterolSynthesis - LDLFormation + LDLcleranceToHepatic - CholesterolLost + HDLclerance + LDLrIndependentCleranceToHepatic
+    ,D(LDLc) ~ LDLFormation - LDLcleranceToHepatic - LDLcleranceToPeriphery - LDLrIndependentCleranceToHepatic - LDLrIndependentCleranceToPeriphery
+    ,D(circ_pcsk9) ~ pcsk9_synthesis - pcsk9_clearance - binding
+    ,D(surface_LDLr) ~ (LDLr_expression - LDLr_clearance)
+    ,D(antipcsk9) ~ absorption - binding - antipcsk9_clearance - distribution
+    ,D(antipcsk9_dose) ~ -dose_compartment_clearance
+    ,D(complex) ~ binding - complex_clearance
+    ,D(peripheral) ~ -redistribution]
 
 
 @named sys = ODESystem(eqs)
