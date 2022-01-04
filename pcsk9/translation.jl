@@ -1,4 +1,4 @@
-using ModelingToolkit, OrdinaryDiffEq
+using ModelingToolkit, OrdinaryDiffEq, GlobalSensitivity, IfElse, PumasQSP
 
 function SREBP2_reg(SREBP2,Vmax_up, Km_up, Vmax_down, Km_down)
     In = IfElse.ifelse(SREBP2 >= 1,(SREBP2-1), (1-SREBP2)) 
@@ -21,7 +21,7 @@ function transform(Xin,Yrange,Xic50, Xrange=3, Xscale = "log")
     end
 end
 
-@parameters t LDLparticleCE circ_volume clearance_hepatic_fraction baseline_hepatic_cholesterol maxSREBP2level minSREBP2level LDLcClearanceRate deciliter_to_liter dilipidemic_index PK_Ka PK_Kel_F  PK_V2_F PK_ComplexClearanceRate PK_kon PK_koff PK_V3 PK_Q Baselinepcsk9 LDLrIndClearanceRate AbsorptionFraction CholesterolIntakeDiet StatinEffectOnCholesterolSynthesis BaselineCholesterolSynthesisRate LDLparticleProdRate LossRate HDLcClearanceRate pcsk9SynthesisRate pcsk9_synthesis_Vm_up pcsk9_synthesis_Km_up pcsk9_synthesis_Vm_down pcsk9_synthesis_Km_down pcsk9ClearanceRate LDLr0 gamma LDLrSynthesis LDLr_expression_Vm_up LDLr_expression_Km_up LDLr_expression_Vm_down LDLr_expression_Km_down LDLrClearance pcsk9_on_LDLr pcsk9_on_LDLr_range SREBP2 circ_pcsk9_ngperml HDLch
+@parameters LDLparticleCE circ_volume clearance_hepatic_fraction baseline_hepatic_cholesterol maxSREBP2level minSREBP2level LDLcClearanceRate deciliter_to_liter dilipidemic_index PK_Ka PK_Kel_F  PK_V2_F PK_ComplexClearanceRate PK_kon PK_koff PK_V3 PK_Q Baselinepcsk9 LDLrIndClearanceRate AbsorptionFraction CholesterolIntakeDiet StatinEffectOnCholesterolSynthesis BaselineCholesterolSynthesisRate LDLparticleProdRate LossRate HDLcClearanceRate pcsk9SynthesisRate pcsk9_synthesis_Vm_up pcsk9_synthesis_Km_up pcsk9_synthesis_Vm_down pcsk9_synthesis_Km_down pcsk9ClearanceRate LDLr0 gamma LDLrSynthesis LDLr_expression_Vm_up LDLr_expression_Km_up LDLr_expression_Vm_down LDLr_expression_Km_down LDLrClearance pcsk9_on_LDLr pcsk9_on_LDLr_range SREBP2 circ_pcsk9_ngperml HDLch
 
 p = [LDLparticleCE  =>  0.92
 ,circ_volume  => 5
@@ -69,7 +69,7 @@ p = [LDLparticleCE  =>  0.92
 ,circ_pcsk9_ngperml => 281.94
 ,HDLch => 50]
 
-@variables hepatic_cholesterol(t) LDLc(t) circ_pcsk9(t) surface_LDLr(t) antipcsk9(t) antipcsk9_dose(t) complex(t) peripheral(t)
+@variables t hepatic_cholesterol(t) LDLc(t) circ_pcsk9(t) surface_LDLr(t) antipcsk9(t) antipcsk9_dose(t) complex(t) peripheral(t)
 
 u0 = [hepatic_cholesterol => 6000
 ,LDLc => 4000
@@ -116,8 +116,23 @@ eqs = [D(hepatic_cholesterol) ~ DietCholesterolAbsorption + CholesterolSynthesis
     ,D(peripheral) ~ -redistribution]
 
 
-@named sys = ODESystem(eqs)
+@named sys = ODESystem(eqs, defaults = [u0; p])
 
 tspan = (0.0,100.0)
 prob = ODEProblem(sys,u0,tspan,p,jac=true)
 sol = solve(prob,Tsit5())
+tsteps = range(tspan[1], tspan[2], 1000)
+trial = Trial(nothing, sys;
+    tspan,
+    saveat = tsteps,
+    alg = Tsit5(),
+    reduction = sol -> sol[150][2]
+)
+
+ub = getindex.(p, 2) .* 1.1
+lb = getindex.(p, 2) .* 0.9
+sens = QSPSensitivity(sys, [trial], parameter_space = [p[i][1] => [lb[i], ub[i]] for i in vcat(1:4,6:7,9:10)])
+ms = gsa(sens, RegressionGSA(true);
+    batch = false,
+    N= 1000
+)
